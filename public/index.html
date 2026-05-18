@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>国际化线索搜寻台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="hero-copyblock">
+          <p class="eyebrow">公开线索搜索工作台</p>
+          <h1>国际化线索搜寻台</h1>
+          <p class="hero-copy">
+            用 Brave 搜索公开的 Facebook 和 Instagram 结果，自动抽取手机号、清洗为结构化线索，并把任务进度与结果落到
+            Supabase，方便继续筛选、导出和业务跟进。
+          </p>
+        </div>
+        <div class="status-cluster">
+          <div class="status-pill" id="braveStatus">Brave：检查中...</div>
+          <div class="status-pill" id="supabaseStatus">Supabase：检查中...</div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="rail">
+          <section class="panel form-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">开始搜索</p>
+                <h2>搜索配置</h2>
+              </div>
+            </div>
+
+            <form id="searchForm" class="search-form">
+              <label class="field full">
+                <span>搜索词</span>
+                <input
+                  name="searchTerm"
+                  placeholder="例如：autoparts importer / electronics wholesale / importadora china"
+                  required
+                />
+              </label>
+
+              <div class="form-row">
+                <label class="field">
+                  <span>区号</span>
+                  <input name="phoneCode" placeholder="+55 / +52 / +86" required />
+                </label>
+                <label class="field">
+                  <span>最大查询数</span>
+                  <input name="maxQueries" type="number" min="1" max="24" value="8" />
+                </label>
+              </div>
+
+              <div class="form-row">
+                <label class="field">
+                  <span>国家</span>
+                  <input name="country" list="countryOptions" placeholder="Brazil / Mexico" />
+                </label>
+                <label class="field">
+                  <span>城市</span>
+                  <input name="city" placeholder="Sao Paulo / Guadalajara" />
+                </label>
+              </div>
+
+              <div class="form-row">
+                <label class="field">
+                  <span>行业组</span>
+                  <select name="industryGroup" id="industrySelect">
+                    <option value="">不指定</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>线索池类型</span>
+                  <select name="poolType" id="poolTypeSelect"></select>
+                </label>
+              </div>
+
+              <div class="form-row">
+                <label class="field">
+                  <span>搜索语言</span>
+                  <input name="searchLanguage" placeholder="en / es / pt" />
+                </label>
+                <label class="field">
+                  <span>Brave 国家参数</span>
+                  <input name="braveCountry" placeholder="US / BR / MX" />
+                </label>
+              </div>
+
+              <fieldset class="platforms field full">
+                <legend>平台</legend>
+                <div id="platformOptions" class="platform-grid"></div>
+              </fieldset>
+
+              <div class="form-actions">
+                <button id="searchButton" type="submit" class="primary-button">开始抓取</button>
+                <button id="cancelButton" type="button" class="ghost-button" disabled>取消任务</button>
+              </div>
+            </form>
+
+            <datalist id="countryOptions"></datalist>
+          </section>
+
+          <section class="panel jobs-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">任务队列</p>
+                <h2>最近任务</h2>
+              </div>
+              <button id="reloadJobsButton" type="button" class="ghost-button">刷新</button>
+            </div>
+            <p id="jobsSummary" class="panel-note">最近创建或完成的搜索任务会显示在这里。</p>
+            <div id="jobList" class="job-list"></div>
+          </section>
+
+          <section class="panel note-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">输出标准</p>
+                <h2>结构化导出说明</h2>
+              </div>
+            </div>
+            <ul class="note-list">
+              <li>导出保持与“巴西汽车汽配 Facebook 线索表”一致的 9 列结构。</li>
+              <li>命中关键词会保留完整 query 集合，方便回看搜词策略。</li>
+              <li>公司/页面列按“标题 | 地点 | 平台”输出，便于人工快速筛选。</li>
+              <li>前端增加业务操作，但导出的 CSV 结构保持稳定。</li>
+            </ul>
+          </section>
+        </aside>
+
+        <section class="content-stack">
+          <section class="panel mission-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">当前任务</p>
+                <h2 id="jobTitle">等待发起任务</h2>
+              </div>
+              <div class="inline-actions">
+                <a id="exportAllLink" class="ghost-link disabled" href="#">导出结构化 CSV</a>
+                <a id="exportRefinedLink" class="ghost-link disabled" href="#">导出精筛 CSV</a>
+              </div>
+            </div>
+
+            <div id="jobMeta" class="mission-meta">
+              <span class="pill">尚未选择任务</span>
+            </div>
+
+            <div class="stats-grid">
+              <article class="stat-card">
+                <span>状态</span>
+                <strong id="jobStatus">待启动</strong>
+              </article>
+              <article class="stat-card">
+                <span>查询进度</span>
+                <strong id="queryProgress">0 / 0</strong>
+              </article>
+              <article class="stat-card">
+                <span>线索总数</span>
+                <strong id="leadCount">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>精筛</span>
+                <strong id="refinedCount">0</strong>
+              </article>
+            </div>
+
+            <div class="progress-bar">
+              <div id="progressFill"></div>
+            </div>
+
+            <div class="query-preview">
+              <div class="section-title">
+                <h3>Query 计划</h3>
+                <p>当前任务生成的搜索组合和执行顺序。</p>
+              </div>
+              <ol id="queryList"></ol>
+            </div>
+          </section>
+
+          <div class="content-grid">
+            <section class="panel events-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-kicker">事件流</p>
+                  <h2>任务日志</h2>
+                </div>
+              </div>
+              <ul id="eventList" class="event-list"></ul>
+            </section>
+
+            <section class="panel leads-panel">
+              <div class="panel-head leads-head">
+                <div>
+                  <p class="panel-kicker">线索输出</p>
+                  <h2>结构化线索结果</h2>
+                  <p id="leadSummary" class="panel-note">支持按质量层级、平台和关键词继续筛选。</p>
+                </div>
+              </div>
+
+              <div class="lead-toolbar">
+                <label class="search-inline">
+                  <span>线索检索</span>
+                  <input id="leadSearchInput" type="search" placeholder="搜索标题、摘要、手机号或命中 query" />
+                </label>
+                <label class="search-inline">
+                  <span>平台</span>
+                  <select id="platformFilterSelect">
+                    <option value="all">全部平台</option>
+                  </select>
+                </label>
+                <div class="chip-group">
+                  <button class="chip active" type="button" data-filter="all">全部</button>
+                  <button class="chip" type="button" data-filter="refined">精筛</button>
+                  <button class="chip" type="button" data-filter="broad">宽筛</button>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>&#22269;&#23478;</th>
+                      <th>&#34892;&#19994;&#32452;</th>
+                      <th>&#20844;&#21496;/&#39029;&#38754;</th>
+                      <th>&#25163;&#26426;</th>
+                      <th>Facebook&#38142;&#25509;</th>
+                      <th>&#31867;&#30446;&#33521;&#25991;</th>
+                      <th>&#31867;&#30446;&#26412;&#22320;&#35821;&#35328;</th>
+                      <th>&#21629;&#20013;&#20851;&#38190;&#35789;</th>
+                      <th>&#25688;&#35201;</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leadTableBody">
+                    <tr>
+                      <td colspan="10" class="empty-cell">还没有结果，先发起一次搜索。</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="summaryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+      <div class="modal-card">
+        <div class="panel-head modal-head">
+          <div>
+            <p class="panel-kicker">线索详情</p>
+            <h2 id="summaryTitle">线索详情</h2>
+          </div>
+          <button id="closeSummaryButton" type="button" class="ghost-button">关闭</button>
+        </div>
+        <div id="summaryMeta" class="mission-meta"></div>
+        <section class="detail-block">
+          <h3>摘要</h3>
+          <p id="summaryBody" class="detail-copy"></p>
+        </section>
+        <section class="detail-block">
+          <h3>命中 Query</h3>
+          <p id="summaryQueries" class="detail-copy"></p>
+        </section>
+        <section class="detail-block">
+          <h3>原始抓取片段</h3>
+          <pre id="summaryRaw" class="raw-block"></pre>
+        </section>
+        <div class="inline-actions">
+          <a id="summaryLink" class="ghost-link" href="#" target="_blank" rel="noreferrer">打开原链接</a>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
