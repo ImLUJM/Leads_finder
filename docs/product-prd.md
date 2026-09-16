@@ -6,7 +6,7 @@
 - 文档类型：PRD
 - 当前版本：v1.1
 - 文档日期：2026-05-18
-- 对应 BRD：[product-brd.md](/C:/Users/XTX14266/Documents/New project/docs/product-brd.md)
+- 对应 BRD：[product-brd.md](./product-brd.md)
 
 ## 2. 产品定位
 

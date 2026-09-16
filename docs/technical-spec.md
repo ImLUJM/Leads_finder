@@ -7,8 +7,8 @@
 - 版本：v1.0
 - 日期：2026-05-14
 - 对应文档：
-  - [product-brd.md](/C:/Users/XTX14266/Documents/New project/docs/product-brd.md)
-  - [product-prd.md](/C:/Users/XTX14266/Documents/New project/docs/product-prd.md)
+  - [product-brd.md](./product-brd.md)
+  - [product-prd.md](./product-prd.md)
 
 ## 2. 技术目标
 

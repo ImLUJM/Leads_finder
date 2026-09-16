@@ -19,10 +19,10 @@ This prevents one search job from overwriting another job's historical ownership
 ## Files involved
 
 - Base schema for fresh environments:
-  - [20260514_create_lead_search_tables.sql](</C:/Users/XTX14266/Documents/New project/supabase/migrations/20260514_create_lead_search_tables.sql>)
+  - [20260514_create_lead_search_tables.sql](<../supabase/migrations/20260514_create_lead_search_tables.sql>)
 
 - Upgrade migration for existing Supabase projects:
-  - [20260514_add_job_leads_relation.sql](</C:/Users/XTX14266/Documents/New project/supabase/migrations/20260514_add_job_leads_relation.sql>)
+  - [20260514_add_job_leads_relation.sql](<../supabase/migrations/20260514_add_job_leads_relation.sql>)
 
 ## Upgrade steps
 

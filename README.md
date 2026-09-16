@@ -43,7 +43,7 @@
 
 Supabase migration 在：
 
-- [supabase/migrations/20260514_create_lead_search_tables.sql](/C:/Users/XTX14266/Documents/New%20project/supabase/migrations/20260514_create_lead_search_tables.sql)
+- [supabase/migrations/20260514_create_lead_search_tables.sql](./supabase/migrations/20260514_create_lead_search_tables.sql)
 
 核心表：
 
