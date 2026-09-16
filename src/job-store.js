@@ -18,7 +18,9 @@ export class JobStore {
       phoneCode: input.phoneCode,
       country: input.country,
       city: input.city,
+      cities: input.cities,
       industryGroup: input.industryGroup,
+      categorySelection: input.categorySelection || null,
       poolType: input.poolType,
       queryMode: input.queryMode,
       platforms: input.platforms,
@@ -27,7 +29,9 @@ export class JobStore {
         searchLanguage: input.searchLanguage,
         braveCountry: input.braveCountry,
         industryLabel: input.industryLabel,
-        industryEnglishLabel: input.industryEnglishLabel
+        industryEnglishLabel: input.industryEnglishLabel,
+        cities: input.cities,
+        categorySelection: input.categorySelection || null
       },
       queryCount: queryPlan.length,
       totalQueries: queryPlan.length,

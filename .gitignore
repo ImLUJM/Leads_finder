@@ -5,3 +5,4 @@ state/
 Thumbs.db
 ~$*.xlsx
 *.xlsx
+.DS_Store

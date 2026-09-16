@@ -11,6 +11,7 @@ import {
   getAppConfig
 } from "./src/config.js";
 import { BraveClient } from "./src/brave-client.js";
+import { getCategoryTree } from "./src/category-taxonomy.js";
 import { JobStore } from "./src/job-store.js";
 import { buildQueryPlan, normalizeSearchPayload } from "./src/query-builder.js";
 import { SearchPipeline } from "./src/search-pipeline.js";
@@ -30,6 +31,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 const config = getAppConfig();
+const recentJobStarts = [];
+let supabaseHealthCache = {
+  value: null,
+  expiresAt: 0
+};
 
 const braveClient = new BraveClient(config);
 const repository = new SupabaseRepository(config);
@@ -42,6 +48,9 @@ const pipeline = new SearchPipeline({
 
 const server = createServer(async (request, response) => {
   const requestUrl = new URL(request.url || "/", config.baseUrl);
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 
   try {
     if (requestUrl.pathname.startsWith("/api/")) {
@@ -62,10 +71,23 @@ server.listen(config.port, () => {
 
 async function handleApiRequest(request, response, requestUrl) {
   if (request.method === "GET" && requestUrl.pathname === "/api/health") {
+    const braveHealth = pipeline.getBraveHealth();
+    const supabaseHealth = await getSupabaseHealth();
+
     sendJson(response, 200, {
       ok: true,
       braveConfigured: braveClient.isConfigured,
       supabaseConfigured: repository.isConfigured,
+      providers: {
+        brave: braveHealth,
+        supabase: supabaseHealth
+      },
+      limits: {
+        activeJobs: pipeline.getActiveJobCount(),
+        maxConcurrentJobs: config.maxConcurrentJobs,
+        startsPerWindow: config.jobRateLimit,
+        windowMs: config.jobRateWindowMs
+      },
       timestamp: new Date().toISOString()
     });
     return;
@@ -76,11 +98,15 @@ async function handleApiRequest(request, response, requestUrl) {
       platforms: PLATFORM_OPTIONS,
       poolTypes: POOL_TYPES,
       industries: INDUSTRY_PRESETS,
+      categoryTaxonomy: getCategoryTree(),
       countries: Object.values(COUNTRY_PRESETS).map((preset) => ({
         country: preset.country,
+        chineseName: preset.chineseName,
+        countryCode: preset.countryCode,
         braveCountry: preset.braveCountry,
         defaultPhoneCode: preset.defaultPhoneCode,
-        defaultSearchLang: preset.defaultSearchLang
+        defaultSearchLang: preset.defaultSearchLang,
+        cities: preset.cities || []
       }))
     });
     return;
@@ -98,8 +124,23 @@ async function handleApiRequest(request, response, requestUrl) {
   }
 
   if (request.method === "POST" && requestUrl.pathname === "/api/jobs") {
-    const payload = await readJsonBody(request);
-    const normalizedInput = normalizeSearchPayload(payload);
+    let payload;
+    let normalizedInput;
+
+    try {
+      payload = await readJsonBody(request);
+      normalizedInput = normalizeSearchPayload(payload);
+    } catch (error) {
+      badRequest(response, error.message || "Invalid search configuration");
+      return;
+    }
+
+    const admission = checkJobAdmission();
+    if (!admission.allowed) {
+      sendRateLimitResponse(response, admission);
+      return;
+    }
+
     const queryPlan = buildQueryPlan(normalizedInput);
     const job = await store.createJob(normalizedInput, queryPlan);
 
@@ -107,10 +148,9 @@ async function handleApiRequest(request, response, requestUrl) {
       queryCount: queryPlan.length
     });
 
-    queueMicrotask(() => {
-      pipeline.runJob(job.id).catch((error) => {
-        console.error(error);
-      });
+    recentJobStarts.push(Date.now());
+    pipeline.runJob(job.id).catch((error) => {
+      console.error(error);
     });
 
     sendJson(response, 202, {
@@ -205,6 +245,69 @@ async function handleApiRequest(request, response, requestUrl) {
   }
 
   badRequest(response, "Unsupported endpoint");
+}
+
+function checkJobAdmission() {
+  const now = Date.now();
+  const windowStart = now - config.jobRateWindowMs;
+
+  while (recentJobStarts.length && recentJobStarts[0] < windowStart) {
+    recentJobStarts.shift();
+  }
+
+  if (pipeline.getActiveJobCount() >= config.maxConcurrentJobs) {
+    return {
+      allowed: false,
+      message: `当前已有 ${config.maxConcurrentJobs} 个任务在执行，请稍后再试。`,
+      retryAfterSeconds: 5
+    };
+  }
+
+  if (recentJobStarts.length >= config.jobRateLimit) {
+    const retryAt = recentJobStarts[0] + config.jobRateWindowMs;
+    return {
+      allowed: false,
+      message: `任务创建过于频繁，每 ${Math.round(config.jobRateWindowMs / 1000)} 秒最多创建 ${config.jobRateLimit} 个任务。`,
+      retryAfterSeconds: Math.max(1, Math.ceil((retryAt - now) / 1000))
+    };
+  }
+
+  return {
+    allowed: true
+  };
+}
+
+function sendRateLimitResponse(response, admission) {
+  response.writeHead(429, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Retry-After": String(admission.retryAfterSeconds || 5)
+  });
+  response.end(JSON.stringify({
+    error: "rate_limited",
+    message: admission.message,
+    retryAfterSeconds: admission.retryAfterSeconds || 5
+  }));
+}
+
+async function getSupabaseHealth() {
+  const now = Date.now();
+  if (supabaseHealthCache.value && supabaseHealthCache.expiresAt > now) {
+    return supabaseHealthCache.value;
+  }
+
+  const health = await repository.checkHealth();
+  const value = {
+    ...health,
+    checkedAt: new Date().toISOString()
+  };
+
+  supabaseHealthCache = {
+    value,
+    expiresAt: now + 30_000
+  };
+
+  return value;
 }
 
 async function serveStaticFile(response, pathname) {

@@ -8,7 +8,8 @@ import {
   getIndustryPreset,
   getPlatform
 } from "./config.js";
-import { createId, safeText, uniqueStrings } from "./utils.js";
+import { getCategoryTree, resolveCategorySelection } from "./category-taxonomy.js";
+import { createId, safeText, toArray, uniqueStrings } from "./utils.js";
 
 const GLOBAL_LOCAL_ROLES = [
   "importer",
@@ -43,16 +44,20 @@ const GLOBAL_IMPORTER_PHRASES = [
 export function getFormOptions() {
   return {
     platforms: PLATFORM_OPTIONS,
-    poolTypes: POOL_TYPES
+    poolTypes: POOL_TYPES,
+    categoryTaxonomy: getCategoryTree()
   };
 }
 
 export function normalizeSearchPayload(payload = {}) {
   const appConfig = getAppConfig();
-  const country = safeText(payload.country);
-  const countryPreset = getCountryPreset(country);
-  const industryGroup = safeText(payload.industryGroup);
-  const industryPreset = getIndustryPreset(industryGroup);
+  const requestedCountry = safeText(payload.country);
+  const countryPreset = getCountryPreset(requestedCountry);
+  const country = countryPreset?.country || requestedCountry;
+  const requestedIndustryGroup = safeText(payload.industryGroup);
+  const categorySelection = resolveCategorySelection(payload);
+  const normalizedIndustryGroup = requestedIndustryGroup || categorySelection?.suggestedIndustryGroup || "";
+  const industryPreset = getIndustryPreset(normalizedIndustryGroup);
   const poolType = POOL_TYPES.some((item) => item.id === payload.poolType) ? payload.poolType : "local_customer";
   const searchTerm = safeText(payload.searchTerm);
 
@@ -70,6 +75,7 @@ export function normalizeSearchPayload(payload = {}) {
 
   const rawPhoneCode = safeText(payload.phoneCode || countryPreset?.defaultPhoneCode || "");
   const phoneCode = normalizePhoneCode(rawPhoneCode);
+  const cities = normalizeCities(payload.cities ?? payload.city, countryPreset);
 
   if (!phoneCode) {
     throw new Error("Phone code is required, for example +55 / +52 / +86");
@@ -84,10 +90,12 @@ export function normalizeSearchPayload(payload = {}) {
     searchTerm,
     phoneCode,
     country,
-    city: safeText(payload.city),
+    cities,
+    city: cities.join(" / "),
     industryGroup: industryPreset?.id || "",
     industryLabel: industryPreset?.label || "",
     industryEnglishLabel: industryPreset?.englishLabel || "",
+    categorySelection,
     poolType,
     platforms: platformIds,
     countryPreset,
@@ -107,28 +115,95 @@ export function normalizeSearchPayload(payload = {}) {
 
 export function buildQueryPlan(input) {
   const geoTerms = uniqueStrings([
-    [input.city, input.country].filter(Boolean).join(" "),
-    input.city,
+    ...(input.cities || []).map((cityName) => [cityName, input.country].filter(Boolean).join(" ")),
+    ...(input.cities || []),
     input.country,
     ...(input.countryPreset?.countryTerms || [])
   ]);
 
   const topicTerms = uniqueStrings([
+    ...(input.categorySelection?.queryTerms?.slice(0, 2) || []),
     input.searchTerm,
     ...(input.industryPreset?.keywords?.slice(0, 3) || [])
   ]);
 
   const modifiers = getModifiersForPool(input);
+  const platforms = input.platforms
+    .map((platformId) => getPlatform(platformId))
+    .filter(Boolean);
+  const queryPlans = [];
+
+  for (const geoTerm of geoTerms.length ? geoTerms : [""]) {
+    for (const platform of platforms) {
+      queryPlans.push(buildGeoQueryPlan({
+        platform,
+        input,
+        geoTerm,
+        topicTerms,
+        modifiers
+      }));
+    }
+  }
+
+  const queries = interleaveQueryPlans(queryPlans, input.maxQueries);
+
+  return queries.map((queryMeta, index) => ({
+    ...queryMeta,
+    index
+  }));
+}
+
+function normalizeCities(rawCities, countryPreset) {
+  const requestedCities = uniqueStrings(toArray(rawCities));
+  if (!requestedCities.length) {
+    return [];
+  }
+
+  const cityOptions = countryPreset?.cities || [];
+  return requestedCities.map((requestedCity) => {
+    const normalizedCity = requestedCity.toLowerCase();
+    const matchedCity = cityOptions.find((cityOption) => {
+      return [cityOption.value, cityOption.label].some((value) => {
+        return safeText(value).toLowerCase() === normalizedCity;
+      });
+    });
+
+    return matchedCity?.value || requestedCity;
+  });
+}
+
+function buildGeoQueryPlan({ platform, input, geoTerm, topicTerms, modifiers }) {
   const queries = [];
   const seen = new Set();
 
-  for (const platformId of input.platforms) {
-    const platform = getPlatform(platformId);
-    if (!platform) {
-      continue;
-    }
+  pushQuery({
+    seen,
+    queries,
+    limit: input.maxQueries,
+    queryMeta: createQueryMeta({
+      platform,
+      geoTerm,
+      topic: input.searchTerm,
+      modifier: "",
+      input
+    })
+  });
 
-    for (const geoTerm of geoTerms.length ? geoTerms : [""]) {
+  for (const topic of topicTerms) {
+    pushQuery({
+      seen,
+      queries,
+      limit: input.maxQueries,
+      queryMeta: createQueryMeta({
+        platform,
+        geoTerm,
+        topic,
+        modifier: "",
+        input
+      })
+    });
+
+    for (const modifier of modifiers) {
       pushQuery({
         seen,
         queries,
@@ -136,60 +211,51 @@ export function buildQueryPlan(input) {
         queryMeta: createQueryMeta({
           platform,
           geoTerm,
-          topic: input.searchTerm,
-          modifier: "",
+          topic,
+          modifier,
           input
         })
       });
-
-      for (const topic of topicTerms) {
-        pushQuery({
-          seen,
-          queries,
-          limit: input.maxQueries,
-          queryMeta: createQueryMeta({
-            platform,
-            geoTerm,
-            topic,
-            modifier: "",
-            input
-          })
-        });
-
-        for (const modifier of modifiers) {
-          pushQuery({
-            seen,
-            queries,
-            limit: input.maxQueries,
-            queryMeta: createQueryMeta({
-              platform,
-              geoTerm,
-              topic,
-              modifier,
-              input
-            })
-          });
-
-          if (queries.length >= input.maxQueries) {
-            break;
-          }
-        }
-
-        if (queries.length >= input.maxQueries) {
-          break;
-        }
-      }
 
       if (queries.length >= input.maxQueries) {
         break;
       }
     }
+
+    if (queries.length >= input.maxQueries) {
+      break;
+    }
   }
 
-  return queries.slice(0, input.maxQueries).map((queryMeta, index) => ({
-    ...queryMeta,
-    index
-  }));
+  return queries;
+}
+
+function interleaveQueryPlans(platformPlans, limit) {
+  const queries = [];
+  let planIndex = 0;
+
+  while (queries.length < limit) {
+    let inserted = false;
+
+    for (const plan of platformPlans) {
+      if (plan[planIndex]) {
+        queries.push(plan[planIndex]);
+        inserted = true;
+      }
+
+      if (queries.length >= limit) {
+        break;
+      }
+    }
+
+    if (!inserted) {
+      break;
+    }
+
+    planIndex += 1;
+  }
+
+  return queries;
 }
 
 function createQueryMeta({ platform, geoTerm, topic, modifier, input }) {

@@ -1,4 +1,5 @@
 import { getCountryPreset, getIndustryPreset } from "./config.js";
+import { findBestCategoryMatch } from "./category-taxonomy.js";
 import {
   canonicalizeUrl,
   createId,
@@ -102,12 +103,14 @@ export function extractLeadCandidates(result, job) {
   const emails = extractEmails(searchableText);
   const canonicalUrl = canonicalizeUrl(result.url);
   const platform = job.platforms?.includes(result.platform) ? result.platform : detectPlatformFromUrl(result.url);
+  const categorySelection = job.categorySelection || job.inputPayload?.categorySelection || null;
 
   return phones.map((phone) => {
     const evaluation = evaluateLead({
       phone,
       signals,
-      job
+      job,
+      rank: result.rank
     });
 
     return {
@@ -128,7 +131,8 @@ export function extractLeadCandidates(result, job) {
         ...signals.supplier,
         ...signals.importer,
         ...signals.china,
-        ...signals.industry
+        ...signals.industry,
+        ...signals.category
       ]),
       qualityTier: evaluation.qualityTier,
       confidence: evaluation.confidence,
@@ -139,7 +143,11 @@ export function extractLeadCandidates(result, job) {
       rawResult: {
         rank: result.rank,
         extraSnippets,
-        detectedSignals: signals
+        detectedSignals: signals,
+        selectedCategory: categorySelection,
+        matchedCategory: signals.matchedCategory,
+        qualityScore: evaluation.qualityScore,
+        qualityFactors: evaluation.qualityFactors
       },
       createdAt: new Date().toISOString()
     };
@@ -158,6 +166,9 @@ export function mergeLeadRecords(existingLead, incomingLead) {
     : incomingLead.confidence;
   const richerSummary = existingLead.summary.length >= incomingLead.summary.length ? existingLead.summary : incomingLead.summary;
   const richerTitle = existingLead.title.length >= incomingLead.title.length ? existingLead.title : incomingLead.title;
+  const existingScore = Number(existingLead.rawResult?.qualityScore || 0);
+  const incomingScore = Number(incomingLead.rawResult?.qualityScore || 0);
+  const strongerEvaluation = existingScore >= incomingScore ? existingLead.rawResult : incomingLead.rawResult;
 
   return {
     ...existingLead,
@@ -170,7 +181,9 @@ export function mergeLeadRecords(existingLead, incomingLead) {
     confidence: upgradedConfidence,
     rawResult: {
       ...existingLead.rawResult,
-      ...incomingLead.rawResult
+      ...incomingLead.rawResult,
+      qualityScore: strongerEvaluation?.qualityScore,
+      qualityFactors: strongerEvaluation?.qualityFactors
     }
   };
 }
@@ -230,8 +243,13 @@ function detectSignals(text, job) {
   const haystack = safeText(text).toLowerCase();
   const countryPreset = getCountryPreset(job.country);
   const industryPreset = getIndustryPreset(job.industryGroup);
+  const categorySelection = job.categorySelection || job.inputPayload?.categorySelection || null;
+  const matchedCategory = findBestCategoryMatch(haystack, categorySelection);
 
-  const industrySignals = industryPreset?.keywords || [];
+  const industrySignals = uniqueStrings([
+    ...(industryPreset?.keywords || []),
+    ...(categorySelection?.matchingTerms || [])
+  ]);
   const chinaSignals = uniqueStrings([...(countryPreset?.chinaPhrases || []), ...CHINA_SIGNALS]);
   const importerSignals = uniqueStrings([...(countryPreset?.importerPhrases || []), ...IMPORTER_SIGNALS]);
   const supplierSignals = uniqueStrings([...(countryPreset?.supplierRoles || []), ...SUPPLIER_SIGNALS]);
@@ -243,16 +261,19 @@ function detectSignals(text, job) {
     china: findMatches(haystack, chinaSignals),
     importer: findMatches(haystack, importerSignals),
     industry: findMatches(haystack, industrySignals),
+    category: matchedCategory?.matchedTerms || [],
+    matchedCategory,
     noise: findMatches(haystack, NOISE_SIGNALS)
   };
 }
 
-function evaluateLead({ phone, signals, job }) {
+function evaluateLead({ phone, signals, job, rank }) {
   const matchesPhoneCode = !job.phoneCode || phone.startsWith(job.phoneCode.replace(/\s+/g, ""));
-  const isChinaPool = job.poolType === "china_supplier";
-  const isRefinedForLocal = matchesPhoneCode && (signals.business.length > 0 || signals.industry.length > 0) && signals.noise.length === 0;
-  const isRefinedForChinaSupplier = phone.startsWith("+86") && signals.supplier.length > 0 && signals.industry.length > 0 && signals.noise.length === 0;
-  const isRefinedForMerchant = matchesPhoneCode && signals.china.length > 0 && (signals.business.length > 0 || signals.industry.length > 0) && signals.noise.length === 0;
+  const hasCategorySignal = signals.category.length > 0;
+  const hasIndustryIntent = signals.industry.length > 0 || hasCategorySignal;
+  const isRefinedForLocal = matchesPhoneCode && (signals.business.length > 0 || hasIndustryIntent) && signals.noise.length === 0;
+  const isRefinedForChinaSupplier = phone.startsWith("+86") && signals.supplier.length > 0 && hasIndustryIntent && signals.noise.length === 0;
+  const isRefinedForMerchant = matchesPhoneCode && signals.china.length > 0 && (signals.business.length > 0 || hasIndustryIntent) && signals.noise.length === 0;
   const isRefinedForImporter = matchesPhoneCode && signals.china.length > 0 && signals.importer.length > 0 && signals.noise.length === 0;
 
   const qualityTier = determineQualityTier({
@@ -263,28 +284,44 @@ function evaluateLead({ phone, signals, job }) {
     importer: isRefinedForImporter
   });
 
-  const signalGroupCount = [
-    signals.business.length,
-    signals.supplier.length,
-    signals.importer.length,
-    signals.china.length,
-    signals.industry.length
-  ].filter((value) => value > 0).length;
-
-  const confidence = qualityTier === "refined"
-    ? signalGroupCount >= 3
-      ? "high"
-      : "medium"
-    : isChinaPool && !phone.startsWith("+86")
-      ? "low"
-      : signalGroupCount >= 2
-        ? "medium"
-        : "low";
+  const qualityFactors = [
+    matchesPhoneCode
+      ? createQualityFactor("phone_code", 25)
+      : createQualityFactor("phone_code_mismatch", -15),
+    createQualityFactor("business_signal", 15, signals.business.length > 0),
+    createQualityFactor("industry_signal", 20, signals.industry.length > 0),
+    createQualityFactor("category_signal", 10, hasCategorySignal),
+    createQualityFactor("supplier_signal", 15, signals.supplier.length > 0),
+    createQualityFactor("importer_signal", 15, signals.importer.length > 0),
+    createQualityFactor("china_signal", 10, signals.china.length > 0),
+    createQualityFactor("search_rank", Number(rank) <= 3 ? 10 : 5, Number(rank) <= 10),
+    createQualityFactor("noise_signal", -30, signals.noise.length > 0)
+  ].filter((factor) => factor.matched);
+  const qualityScore = clampScore(10 + qualityFactors.reduce((total, factor) => total + factor.points, 0));
+  const confidence = qualityScore >= 75
+    ? "high"
+    : qualityScore >= 50
+      ? "medium"
+      : "low";
 
   return {
     qualityTier,
-    confidence
+    confidence,
+    qualityScore,
+    qualityFactors
   };
+}
+
+function createQualityFactor(code, points, matched) {
+  return {
+    code,
+    points,
+    matched: matched ?? true
+  };
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, value));
 }
 
 function determineQualityTier(flags) {

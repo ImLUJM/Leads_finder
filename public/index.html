@@ -19,13 +19,12 @@
           <p class="eyebrow">公开线索搜索工作台</p>
           <h1>国际化线索搜寻台</h1>
           <p class="hero-copy">
-            用 Brave 搜索公开的 Facebook 和 Instagram 结果，自动抽取手机号、清洗为结构化线索，并把任务进度与结果落到
-            Supabase，方便继续筛选、导出和业务跟进。
+            从公开搜索结果中发现潜在客户，自动抽取联系方式、评估可信度并沉淀可导出的线索。
           </p>
         </div>
         <div class="status-cluster">
-          <div class="status-pill" id="braveStatus">Brave：检查中...</div>
-          <div class="status-pill" id="supabaseStatus">Supabase：检查中...</div>
+          <div class="status-pill" id="braveStatus"><span class="status-dot"></span>Brave：检查中...</div>
+          <div class="status-pill" id="supabaseStatus"><span class="status-dot"></span>Supabase：检查中...</div>
         </div>
       </header>
 
@@ -51,23 +50,28 @@
 
               <div class="form-row">
                 <label class="field">
-                  <span>区号</span>
-                  <input name="phoneCode" placeholder="+55 / +52 / +86" required />
+                  <span>国家</span>
+                  <select name="country" id="countrySelect" required>
+                    <option value="">请选择国家</option>
+                  </select>
                 </label>
-                <label class="field">
-                  <span>最大查询数</span>
-                  <input name="maxQueries" type="number" min="1" max="24" value="8" />
-                </label>
+                <div class="field">
+                  <span>城市（可多选）</span>
+                  <details id="cityPicker" class="multi-select disabled">
+                    <summary id="citySummary">请先选择国家</summary>
+                    <div id="cityOptions" class="multi-select-menu"></div>
+                  </details>
+                </div>
               </div>
 
               <div class="form-row">
                 <label class="field">
-                  <span>国家</span>
-                  <input name="country" list="countryOptions" placeholder="Brazil / Mexico" />
+                  <span>区号</span>
+                  <input name="phoneCode" placeholder="选择国家后自动匹配" required />
                 </label>
                 <label class="field">
-                  <span>城市</span>
-                  <input name="city" placeholder="Sao Paulo / Guadalajara" />
+                  <span>最大查询数</span>
+                  <input name="maxQueries" type="number" min="1" max="24" value="8" />
                 </label>
               </div>
 
@@ -84,56 +88,67 @@
                 </label>
               </div>
 
-              <div class="form-row">
-                <label class="field">
-                  <span>搜索语言</span>
-                  <input name="searchLanguage" placeholder="en / es / pt" />
-                </label>
-                <label class="field">
-                  <span>Brave 国家参数</span>
-                  <input name="braveCountry" placeholder="US / BR / MX" />
-                </label>
-              </div>
+              <section class="field full category-panel">
+                <div class="category-head">
+                  <div>
+                    <span>阿里国际站类目</span>
+                    <p>可选，用三级类目收窄搜索词并辅助结果归类。</p>
+                  </div>
+                </div>
+                <div class="category-grid">
+                  <label class="field">
+                    <span>一级类目</span>
+                    <select name="categoryLevel1" id="categoryLevel1Select">
+                      <option value="">不指定</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>二级类目</span>
+                    <select name="categoryLevel2" id="categoryLevel2Select" disabled>
+                      <option value="">先选择一级类目</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>三级类目</span>
+                    <select name="categoryLevel3" id="categoryLevel3Select" disabled>
+                      <option value="">先选择二级类目</option>
+                    </select>
+                  </label>
+                </div>
+                <p id="categoryHint" class="field-hint">未指定类目时，仍按搜索词和行业组执行。</p>
+              </section>
 
               <fieldset class="platforms field full">
                 <legend>平台</legend>
                 <div id="platformOptions" class="platform-grid"></div>
               </fieldset>
 
+              <details class="advanced-options">
+                <summary>高级搜索参数</summary>
+                <div class="form-row advanced-grid">
+                  <label class="field">
+                    <span>搜索语言</span>
+                    <input name="searchLanguage" placeholder="自动匹配，也可填 en / es / pt" />
+                  </label>
+                  <label class="field">
+                    <span>Brave 国家参数</span>
+                    <input name="braveCountry" placeholder="自动匹配，也可填 US / BR / MX" />
+                  </label>
+                </div>
+              </details>
+
+              <div class="query-estimate" id="queryEstimate">
+                <strong>预计 8 次搜索请求</strong>
+                <span>两个平台会公平分配，执行至少约 7 秒。</span>
+              </div>
+
+              <div id="formMessage" class="form-message hidden" role="status" aria-live="polite"></div>
+
               <div class="form-actions">
                 <button id="searchButton" type="submit" class="primary-button">开始抓取</button>
                 <button id="cancelButton" type="button" class="ghost-button" disabled>取消任务</button>
               </div>
             </form>
-
-            <datalist id="countryOptions"></datalist>
-          </section>
-
-          <section class="panel jobs-panel">
-            <div class="panel-head">
-              <div>
-                <p class="panel-kicker">任务队列</p>
-                <h2>最近任务</h2>
-              </div>
-              <button id="reloadJobsButton" type="button" class="ghost-button">刷新</button>
-            </div>
-            <p id="jobsSummary" class="panel-note">最近创建或完成的搜索任务会显示在这里。</p>
-            <div id="jobList" class="job-list"></div>
-          </section>
-
-          <section class="panel note-panel">
-            <div class="panel-head">
-              <div>
-                <p class="panel-kicker">输出标准</p>
-                <h2>结构化导出说明</h2>
-              </div>
-            </div>
-            <ul class="note-list">
-              <li>导出保持与“巴西汽车汽配 Facebook 线索表”一致的 9 列结构。</li>
-              <li>命中关键词会保留完整 query 集合，方便回看搜词策略。</li>
-              <li>公司/页面列按“标题 | 地点 | 平台”输出，便于人工快速筛选。</li>
-              <li>前端增加业务操作，但导出的 CSV 结构保持稳定。</li>
-            </ul>
           </section>
         </aside>
 
@@ -143,10 +158,6 @@
               <div>
                 <p class="panel-kicker">当前任务</p>
                 <h2 id="jobTitle">等待发起任务</h2>
-              </div>
-              <div class="inline-actions">
-                <a id="exportAllLink" class="ghost-link disabled" href="#">导出结构化 CSV</a>
-                <a id="exportRefinedLink" class="ghost-link disabled" href="#">导出精筛 CSV</a>
               </div>
             </div>
 
@@ -186,69 +197,86 @@
             </div>
           </section>
 
-          <div class="content-grid">
-            <section class="panel events-panel">
-              <div class="panel-head">
+          <section class="panel leads-panel">
+            <div class="panel-head leads-head">
+              <div>
+                <p class="panel-kicker">线索输出</p>
+                <h2>结构化线索结果</h2>
+                <p id="leadSummary" class="panel-note">支持按质量层级、平台和关键词继续筛选。</p>
+              </div>
+              <div class="inline-actions lead-export-actions">
+                <a id="exportAllLink" class="ghost-link disabled" href="#">导出结构化 CSV</a>
+                <a id="exportRefinedLink" class="ghost-link disabled" href="#">导出精筛 CSV</a>
+              </div>
+            </div>
+
+            <div class="lead-toolbar">
+              <label class="search-inline">
+                <span>线索检索</span>
+                <input id="leadSearchInput" type="search" placeholder="搜索标题、摘要、手机号或命中 query" />
+              </label>
+              <label class="search-inline">
+                <span>平台</span>
+                <select id="platformFilterSelect">
+                  <option value="all">全部平台</option>
+                </select>
+              </label>
+              <div class="chip-group">
+                <button class="chip active" type="button" data-filter="all">全部</button>
+                <button class="chip" type="button" data-filter="refined">精筛</button>
+                <button class="chip" type="button" data-filter="broad">宽筛</button>
+              </div>
+            </div>
+
+            <div class="table-wrap lead-table-wrap">
+              <table class="leads-table">
+                <thead>
+                  <tr>
+                    <th>&#22269;&#23478;</th>
+                    <th>&#34892;&#19994;&#32452;</th>
+                    <th>&#20844;&#21496;/&#39029;&#38754;</th>
+                    <th>&#25163;&#26426;</th>
+                    <th>可信度</th>
+                    <th>来源链接</th>
+                    <th>&#31867;&#30446;&#33521;&#25991;</th>
+                    <th>&#31867;&#30446;&#26412;&#22320;&#35821;&#35328;</th>
+                    <th>命中 Query</th>
+                    <th>&#25688;&#35201;</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="leadTableBody">
+                  <tr>
+                    <td colspan="11" class="empty-cell">还没有结果，先发起一次搜索。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel jobs-panel secondary-panel compact-jobs-panel">
+            <details id="recentTasksDrawer" class="task-drawer">
+              <summary class="task-drawer-summary">
                 <div>
-                  <p class="panel-kicker">事件流</p>
-                  <h2>任务日志</h2>
+                  <p class="panel-kicker">任务队列</p>
+                  <h2>最近任务</h2>
+                  <p id="jobsSummary" class="panel-note">最近创建或完成的搜索任务会显示在这里。</p>
                 </div>
-              </div>
-              <ul id="eventList" class="event-list"></ul>
-            </section>
+                <span class="drawer-badge">展开查看</span>
+              </summary>
 
-            <section class="panel leads-panel">
-              <div class="panel-head leads-head">
-                <div>
-                  <p class="panel-kicker">线索输出</p>
-                  <h2>结构化线索结果</h2>
-                  <p id="leadSummary" class="panel-note">支持按质量层级、平台和关键词继续筛选。</p>
+              <div class="task-drawer-body">
+                <div class="task-toolbar">
+                  <label class="search-inline compact-inline">
+                    <span>日期</span>
+                    <input id="jobDateFilter" type="date" />
+                  </label>
+                  <button id="reloadJobsButton" type="button" class="ghost-button">刷新</button>
                 </div>
+                <div id="jobList" class="job-list compact-job-list"></div>
               </div>
-
-              <div class="lead-toolbar">
-                <label class="search-inline">
-                  <span>线索检索</span>
-                  <input id="leadSearchInput" type="search" placeholder="搜索标题、摘要、手机号或命中 query" />
-                </label>
-                <label class="search-inline">
-                  <span>平台</span>
-                  <select id="platformFilterSelect">
-                    <option value="all">全部平台</option>
-                  </select>
-                </label>
-                <div class="chip-group">
-                  <button class="chip active" type="button" data-filter="all">全部</button>
-                  <button class="chip" type="button" data-filter="refined">精筛</button>
-                  <button class="chip" type="button" data-filter="broad">宽筛</button>
-                </div>
-              </div>
-
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>&#22269;&#23478;</th>
-                      <th>&#34892;&#19994;&#32452;</th>
-                      <th>&#20844;&#21496;/&#39029;&#38754;</th>
-                      <th>&#25163;&#26426;</th>
-                      <th>Facebook&#38142;&#25509;</th>
-                      <th>&#31867;&#30446;&#33521;&#25991;</th>
-                      <th>&#31867;&#30446;&#26412;&#22320;&#35821;&#35328;</th>
-                      <th>&#21629;&#20013;&#20851;&#38190;&#35789;</th>
-                      <th>&#25688;&#35201;</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody id="leadTableBody">
-                    <tr>
-                      <td colspan="10" class="empty-cell">还没有结果，先发起一次搜索。</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
+            </details>
+          </section>
         </section>
       </main>
     </div>
@@ -270,6 +298,10 @@
         <section class="detail-block">
           <h3>命中 Query</h3>
           <p id="summaryQueries" class="detail-copy"></p>
+        </section>
+        <section class="detail-block">
+          <h3>可信度评分</h3>
+          <div id="summaryQuality" class="quality-breakdown"></div>
         </section>
         <section class="detail-block">
           <h3>原始抓取片段</h3>

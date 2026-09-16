@@ -8,6 +8,9 @@ export const STRUCTURED_EXPORT_HEADERS = [
   { key: "companyPage", label: "\u516c\u53f8/\u9875\u9762" },
   { key: "phone", label: "\u624b\u673a" },
   { key: "facebookLink", label: "Facebook\u94fe\u63a5" },
+  { key: "categoryLevel1", label: "\u4e00\u7ea7\u7c7b\u76ee" },
+  { key: "categoryLevel2", label: "\u4e8c\u7ea7\u7c7b\u76ee" },
+  { key: "categoryLevel3", label: "\u4e09\u7ea7\u7c7b\u76ee" },
   { key: "categoryEnglish", label: "\u7c7b\u76ee\u82f1\u6587" },
   { key: "categoryLocal", label: "\u7c7b\u76ee\u672c\u5730\u8bed\u8a00" },
   { key: "matchedKeywords", label: "\u547d\u4e2d\u5173\u952e\u8bcd" },
@@ -16,18 +19,22 @@ export const STRUCTURED_EXPORT_HEADERS = [
 
 export function buildStructuredLeadRow(lead) {
   const industryPreset = getIndustryPreset(lead.industryGroup);
+  const category = extractLeadCategory(lead, industryPreset);
   const location = inferDisplayLocation(lead) || safeText(lead.city);
   const companyPage = [safeText(lead.title), location].filter(Boolean).join(" | ");
 
   return {
     country: safeText(lead.country),
     city: location || "\u6682\u65e0",
-    industryGroup: industryPreset?.exportGroupLabel || industryPreset?.label || safeText(lead.industryGroup),
+    industryGroup: category.industryGroup,
     companyPage: companyPage || safeText(lead.sourceUrl || lead.canonicalUrl),
     phone: formatSpreadsheetPhone(lead.phone),
     facebookLink: safeText(lead.sourceUrl || lead.canonicalUrl),
-    categoryEnglish: industryPreset?.exportCategoryEnglish || industryPreset?.englishLabel || safeText(lead.industryGroup),
-    categoryLocal: industryPreset?.exportCategoryLocal || industryPreset?.label || "",
+    categoryLevel1: category.categoryLevel1,
+    categoryLevel2: category.categoryLevel2,
+    categoryLevel3: category.categoryLevel3,
+    categoryEnglish: category.categoryEnglish,
+    categoryLocal: category.categoryLocal,
     matchedKeywords: formatMatchedKeywordText(lead),
     summary: normalizeSummaryText(lead.summary)
   };
@@ -103,4 +110,25 @@ function normalizeSummaryText(summary) {
 
 function compareText(left, right) {
   return safeText(left).localeCompare(safeText(right), "zh-Hans-CN");
+}
+
+function extractLeadCategory(lead, industryPreset) {
+  const matchedCategory = lead.rawResult?.matchedCategory || lead.rawResult?.selectedCategory || null;
+  const pathEnglish = Array.isArray(matchedCategory?.pathEnglish) ? matchedCategory.pathEnglish : [];
+
+  return {
+    industryGroup: industryPreset?.exportGroupLabel || industryPreset?.label || matchedCategory?.level1Label || safeText(lead.industryGroup),
+    categoryLevel1: pathEnglish[0] || "",
+    categoryLevel2: pathEnglish[1] || "",
+    categoryLevel3: pathEnglish[2] || matchedCategory?.label || "",
+    categoryEnglish: pathEnglish.length
+      ? pathEnglish.join(" / ")
+      : matchedCategory?.label || industryPreset?.exportCategoryEnglish || industryPreset?.englishLabel || safeText(lead.industryGroup),
+    categoryLocal: matchedCategory?.localLabel
+      || matchedCategory?.level3LocalLabel
+      || matchedCategory?.displayLabel
+      || industryPreset?.exportCategoryLocal
+      || industryPreset?.label
+      || ""
+  };
 }

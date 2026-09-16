@@ -8,26 +8,38 @@ export class SearchPipeline {
     this.store = store;
     this.requestDelayMs = requestDelayMs;
     this.runningJobs = new Set();
+    this.queuedJobs = new Set();
     this.controllers = new Map();
+    this.braveHealth = {
+      configured: braveClient.isConfigured,
+      state: braveClient.isConfigured ? "configured" : "missing",
+      transport: braveClient.transport,
+      message: "",
+      checkedAt: ""
+    };
   }
 
   async runJob(jobId) {
-    if (this.runningJobs.has(jobId)) {
+    if (this.runningJobs.has(jobId) || this.queuedJobs.has(jobId)) {
       return;
     }
 
+    this.queuedJobs.add(jobId);
     const job = await this.store.getJob(jobId);
     if (!job) {
+      this.queuedJobs.delete(jobId);
       return;
     }
 
     if (!this.braveClient.isConfigured) {
+      this.queuedJobs.delete(jobId);
       await this.failJob(jobId, "Missing BRAVE_API_KEY. Unable to start search.");
       return;
     }
 
     const controller = new AbortController();
     this.controllers.set(jobId, controller);
+    this.queuedJobs.delete(jobId);
     this.runningJobs.add(jobId);
 
     try {
@@ -49,6 +61,7 @@ export class SearchPipeline {
       });
 
       if (!probeResponse.ok) {
+        this.updateBraveHealth("error", getBraveErrorMessage(probeResponse));
         if (isQuotaLimited(probeResponse)) {
           await this.failJob(jobId, "Brave quota exhausted. Collector did not continue.", probeResponse);
           return;
@@ -58,6 +71,7 @@ export class SearchPipeline {
         return;
       }
 
+      this.updateBraveHealth("ready", "");
       await this.store.addEvent(jobId, "brave.probe.ok", "Brave preflight succeeded. Running queries.", {
         sampleResults: probeResponse.results.length
       });
@@ -107,12 +121,14 @@ export class SearchPipeline {
           }
         );
 
-        const response = await this.braveClient.search({
-          query: queryMeta.text,
-          country: job.inputPayload.braveCountry,
-          searchLanguage: job.inputPayload.searchLanguage,
-          signal: controller.signal
-        });
+        const response = queryMeta.id === probeQuery.id
+          ? probeResponse
+          : await this.braveClient.search({
+            query: queryMeta.text,
+            country: job.inputPayload.braveCountry,
+            searchLanguage: job.inputPayload.searchLanguage,
+            signal: controller.signal
+          });
 
         statusBreakdown[response.status] = (statusBreakdown[response.status] || 0) + 1;
 
@@ -252,12 +268,34 @@ export class SearchPipeline {
         });
         await this.store.addEvent(jobId, "job.cancelled", "Job cancelled.");
       } else {
+        this.updateBraveHealth("error", error.message || "Brave request failed");
         await this.failJob(jobId, error.message || "Job failed unexpectedly");
       }
     } finally {
+      this.queuedJobs.delete(jobId);
       this.runningJobs.delete(jobId);
       this.controllers.delete(jobId);
     }
+  }
+
+  getActiveJobCount() {
+    return this.runningJobs.size + this.queuedJobs.size;
+  }
+
+  getBraveHealth() {
+    return {
+      ...this.braveHealth
+    };
+  }
+
+  updateBraveHealth(state, message) {
+    this.braveHealth = {
+      configured: this.braveClient.isConfigured,
+      state,
+      transport: this.braveClient.transport,
+      message,
+      checkedAt: new Date().toISOString()
+    };
   }
 
   async cancelJob(jobId) {

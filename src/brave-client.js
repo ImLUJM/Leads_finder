@@ -6,10 +6,25 @@ export class BraveClient {
     this.defaultCountry = config.braveCountry;
     this.defaultSearchLang = config.defaultSearchLang;
     this.resultCount = config.resultCount;
+    this.requestTimeoutMs = config.requestTimeoutMs;
+    this.proxyConfigured = config.proxyConfigured;
+    this.proxyEnabled = config.proxyEnabled;
   }
 
   get isConfigured() {
     return Boolean(this.apiKey);
+  }
+
+  get transport() {
+    if (this.proxyEnabled) {
+      return "proxy";
+    }
+
+    if (this.proxyConfigured) {
+      return "proxy-not-enabled";
+    }
+
+    return "direct";
   }
 
   async search({ query, country, searchLanguage, offset = 0, signal }) {
@@ -20,15 +35,40 @@ export class BraveClient {
     requestUrl.searchParams.set("search_lang", searchLanguage || this.defaultSearchLang);
     requestUrl.searchParams.set("offset", String(offset));
 
-    const response = await fetch(requestUrl, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": this.apiKey
-      },
-      signal
-    });
+    const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    let response;
+
+    try {
+      response = await fetch(requestUrl, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "Accept-Encoding": "gzip",
+          "X-Subscription-Token": this.apiKey
+        },
+        signal: requestSignal
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+
+      return {
+        ok: false,
+        status: 0,
+        data: {
+          message: appendTransportHint(error.name === "TimeoutError"
+            ? `Brave request timed out after ${this.requestTimeoutMs}ms`
+            : error.message || "Brave request failed", this.transport)
+        },
+        results: [],
+        headers: {
+          rateLimitRemaining: null,
+          rateLimitReset: null
+        }
+      };
+    }
 
     const text = await response.text();
     let data = {};
@@ -52,6 +92,18 @@ export class BraveClient {
       }
     };
   }
+}
+
+function appendTransportHint(message, transport) {
+  if (transport === "proxy") {
+    return `${message} (configured proxy connection)`;
+  }
+
+  if (transport === "proxy-not-enabled") {
+    return `${message} (proxy URL exists, but the server was not started with npm start)`;
+  }
+
+  return `${message} (direct connection; configure HTTPS_PROXY if Brave is unreachable)`;
 }
 
 export function normalizeBraveResults(data) {

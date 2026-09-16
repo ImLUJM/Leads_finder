@@ -4,11 +4,37 @@ export class SupabaseRepository {
   constructor(config) {
     this.url = normalizeSupabaseUrl(config.supabaseUrl);
     this.serviceRoleKey = safeText(config.supabaseServiceRoleKey);
+    this.requestTimeoutMs = config.requestTimeoutMs;
     this.leadSchemaMode = "";
   }
 
   get isConfigured() {
     return Boolean(this.url && this.serviceRoleKey);
+  }
+
+  async checkHealth() {
+    if (!this.isConfigured) {
+      return {
+        configured: false,
+        state: "missing",
+        message: "Supabase is not configured"
+      };
+    }
+
+    try {
+      await this.request("GET", "/lead_search_jobs?select=id&limit=1");
+      return {
+        configured: true,
+        state: "ready",
+        message: ""
+      };
+    } catch (error) {
+      return {
+        configured: true,
+        state: "error",
+        message: error.message || "Supabase connection failed"
+      };
+    }
   }
 
   async persistJob(job) {
@@ -211,7 +237,8 @@ export class SupabaseRepository {
         Authorization: `Bearer ${this.serviceRoleKey}`,
         ...(headers || {})
       },
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(this.requestTimeoutMs)
     });
 
     if (!response.ok) {
@@ -323,6 +350,7 @@ function legacyLeadToRow(lead) {
 }
 
 function rowToJob(row) {
+  const inputPayload = row.input_payload || {};
   return {
     id: row.id,
     status: row.status,
@@ -330,12 +358,14 @@ function rowToJob(row) {
     phoneCode: row.phone_code,
     country: row.country || "",
     city: row.city || "",
+    cities: inputPayload.cities || splitStoredCities(row.city),
     industryGroup: row.industry_group || "",
+    categorySelection: inputPayload.categorySelection || null,
     poolType: row.pool_type,
     queryMode: row.query_mode,
     platforms: row.platforms || [],
     queryPlan: row.query_plan || [],
-    inputPayload: row.input_payload || {},
+    inputPayload,
     queryCount: row.query_count,
     totalQueries: row.total_queries,
     completedQueries: row.completed_queries,
@@ -350,6 +380,13 @@ function rowToJob(row) {
     completedAt: row.completed_at || "",
     createdAt: row.created_at
   };
+}
+
+function splitStoredCities(value) {
+  return safeText(value)
+    .split(/\s*\/\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function rowToEvent(row) {
